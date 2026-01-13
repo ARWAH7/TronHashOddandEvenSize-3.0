@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, RotateCcw, Settings, X, Loader2, ShieldCheck, AlertCircle, RefreshCw, BarChart3, PieChart, Plus, Trash2, Edit3, Grid3X3, LayoutDashboard, Palette, Flame, Layers, Save, FileText } from 'lucide-react';
+import { Search, RotateCcw, Settings, X, Loader2, ShieldCheck, AlertCircle, RefreshCw, BarChart3, PieChart, Plus, Trash2, Edit3, Grid3X3, LayoutDashboard, Palette, Flame, Layers, Save, FileText, SortAsc, SortDesc, CheckSquare, Square, Filter, ChevronRight, ChevronLeft } from 'lucide-react';
 import { BlockData, IntervalRule } from './types';
 import { fetchLatestBlock, fetchBlockByNum, transformTronBlock } from './utils/helpers';
 import TrendChart from './components/TrendChart';
@@ -34,7 +34,9 @@ const DEFAULT_RULES: IntervalRule[] = [
 const App: React.FC = () => {
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('tron_api_key') || '');
   const [showSettings, setShowSettings] = useState(() => !localStorage.getItem('tron_api_key'));
+  const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  
   const [themeColors, setThemeColors] = useState<ThemeColors>(() => {
     const saved = localStorage.getItem('theme_colors');
     if (saved) {
@@ -60,7 +62,13 @@ const App: React.FC = () => {
     }
     return DEFAULT_RULES;
   });
-  const [activeRuleId, setActiveRuleId] = useState<string>(rules[0].id);
+  const [activeRuleId, setActiveRuleId] = useState<string>(rules[0]?.id || '');
+  
+  // Rule Management States
+  const [ruleSearchQuery, setRuleSearchQuery] = useState('');
+  const [switcherSearchQuery, setSwitcherSearchQuery] = useState('');
+  const [ruleSortBy, setRuleSortBy] = useState<'value' | 'label'>('value');
+  const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
   
   const [editingRule, setEditingRule] = useState<IntervalRule | null>(null);
   const [showBatchModal, setShowBatchModal] = useState(false);
@@ -73,6 +81,7 @@ const App: React.FC = () => {
   
   const blocksRef = useRef<BlockData[]>([]);
   const isPollingBusy = useRef(false);
+  const navRef = useRef<HTMLDivElement>(null);
 
   // Sync theme colors to CSS variables
   useEffect(() => {
@@ -94,6 +103,7 @@ const App: React.FC = () => {
   , [rules, activeRuleId]);
 
   const checkAlignment = (height: number, rule: IntervalRule) => {
+    if (!rule) return false;
     if (rule.value <= 1) return true;
     if (rule.startBlock > 0) {
       return height >= rule.startBlock && (height - rule.startBlock) % rule.value === 0;
@@ -102,6 +112,7 @@ const App: React.FC = () => {
   };
 
   const ruleFilteredBlocks = useMemo(() => {
+    if (!activeRule) return [];
     return allBlocks.filter(b => checkAlignment(b.height, activeRule));
   }, [allBlocks, activeRule]);
 
@@ -126,7 +137,7 @@ const App: React.FC = () => {
   }, []);
 
   const fillDataForInterval = useCallback(async (rule: IntervalRule) => {
-    if (!apiKey) return;
+    if (!apiKey || !rule) return;
     setIsLoading(true);
     setError(null);
     try {
@@ -180,10 +191,10 @@ const App: React.FC = () => {
   }, [apiKey]);
 
   useEffect(() => {
-    if (apiKey && ruleFilteredBlocks.length < 50 && !isLoading) {
+    if (apiKey && activeRule && ruleFilteredBlocks.length < 50 && !isLoading) {
       fillDataForInterval(activeRule);
     }
-  }, [activeRuleId, apiKey, fillDataForInterval, ruleFilteredBlocks.length]);
+  }, [activeRuleId, apiKey, fillDataForInterval, ruleFilteredBlocks.length, activeRule]);
 
   // Persistent Polling Logic
   useEffect(() => {
@@ -255,31 +266,72 @@ const App: React.FC = () => {
 
   const deleteRule = (id: string) => {
     if (rules.length <= 1) return;
-    setRules(prev => prev.filter(r => r.id !== id));
-    if (activeRuleId === id) setActiveRuleId(rules[0].id);
+    setRules(prev => {
+      const filtered = prev.filter(r => r.id !== id);
+      if (activeRuleId === id) setActiveRuleId(filtered[0]?.id || '');
+      return filtered;
+    });
   };
 
-  // 批量更新长龙阈值
+  const deleteSelectedRules = () => {
+    if (selectedRuleIds.size === 0) return;
+    if (selectedRuleIds.size >= rules.length) {
+      alert('至少保留一条采样规则');
+      return;
+    }
+    const confirmed = window.confirm(`确定删除选中的 ${selectedRuleIds.size} 条规则吗？`);
+    if (!confirmed) return;
+
+    setRules(prev => {
+      const filtered = prev.filter(r => !selectedRuleIds.has(r.id));
+      if (selectedRuleIds.has(activeRuleId)) setActiveRuleId(filtered[0]?.id || '');
+      return filtered;
+    });
+    setSelectedRuleIds(new Set());
+  };
+
+  const toggleRuleSelection = (id: string) => {
+    setSelectedRuleIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllRules = (filteredRules: IntervalRule[]) => {
+    if (selectedRuleIds.size === filteredRules.length) {
+      setSelectedRuleIds(new Set());
+    } else {
+      setSelectedRuleIds(new Set(filteredRules.map(r => r.id)));
+    }
+  };
+
   const batchUpdateDragonThreshold = (val: number) => {
     setRules(prev => prev.map(r => ({ ...r, dragonThreshold: val })));
     alert(`已将所有规则的长龙提醒阈值批量设置为: ${val}连`);
   };
 
-  // 批量导入规则逻辑
   const handleBatchRuleSave = () => {
     try {
-      // 格式: 名称,步长,偏移,走势行,珠盘行,龙阈值
       const lines = batchText.trim().split('\n');
       const newRules: IntervalRule[] = lines.map((line, idx) => {
-        const [label, value, start, trend, bead, dragon] = line.split(',').map(s => s.trim());
+        const parts = line.split(',').map(s => s.trim());
+        const label = parts[0] || '未命名';
+        const value = parseInt(parts[1]) || 1;
+        const start = parseInt(parts[2]) || 0;
+        const trend = parseInt(parts[3]) || 6;
+        const bead = parseInt(parts[4]) || 6;
+        const dragon = parseInt(parts[5]) || 3;
+        
         return {
           id: `rule-${Date.now()}-${idx}`,
-          label: label || '未命名',
-          value: parseInt(value) || 1,
-          startBlock: parseInt(start) || 0,
-          trendRows: parseInt(trend) || 6,
-          beadRows: parseInt(bead) || 6,
-          dragonThreshold: parseInt(dragon) || 3
+          label,
+          value,
+          startBlock: start,
+          trendRows: trend,
+          beadRows: bead,
+          dragonThreshold: dragon
         };
       });
       if (newRules.length > 0) {
@@ -292,6 +344,28 @@ const App: React.FC = () => {
       alert('解析失败，请检查格式：名称,步长,偏移,走势行,珠盘行,龙阈值 (逗号分隔)');
     }
   };
+
+  const filteredAndSortedRules = useMemo(() => {
+    let result = rules.filter(r => 
+      r.label.toLowerCase().includes(ruleSearchQuery.toLowerCase()) || 
+      r.value.toString().includes(ruleSearchQuery)
+    );
+
+    result.sort((a, b) => {
+      if (ruleSortBy === 'value') return a.value - b.value;
+      return a.label.localeCompare(b.label);
+    });
+
+    return result;
+  }, [rules, ruleSearchQuery, ruleSortBy]);
+
+  const switcherFilteredRules = useMemo(() => {
+    if (!switcherSearchQuery) return rules.sort((a,b) => a.value - b.value);
+    return rules.filter(r => 
+      r.label.toLowerCase().includes(switcherSearchQuery.toLowerCase()) || 
+      r.value.toString().includes(switcherSearchQuery)
+    ).sort((a,b) => a.value - b.value);
+  }, [rules, switcherSearchQuery]);
 
   const TABS = [
     { id: 'dashboard', label: '综合盘面', icon: LayoutDashboard, color: 'text-blue-500' },
@@ -354,35 +428,58 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Interval Navigation */}
-      <div className="flex flex-col items-center mb-8 overflow-hidden">
-        <nav className="flex justify-center flex-wrap gap-2 md:gap-3 mb-4 w-full px-2">
-          {rules.map((rule) => (
-            <button
-              key={rule.id}
-              onClick={() => setActiveRuleId(rule.id)}
-              className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 border-2 whitespace-nowrap ${
-                activeRuleId === rule.id
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-md'
-                  : 'bg-white text-gray-400 border-transparent hover:border-blue-100 hover:text-blue-500'
-              }`}
-            >
-              <div className="flex flex-col items-center">
-                <span>{rule.label}</span>
-                <div className="flex space-x-1 mt-0.5">
-                   <span className="text-[9px] bg-black/10 px-1 rounded uppercase">T:{rule.trendRows}</span>
-                   <span className="text-[9px] bg-black/10 px-1 rounded uppercase">B:{rule.beadRows}</span>
-                </div>
-              </div>
-            </button>
-          ))}
-          <button 
-            onClick={() => setEditingRule({ id: Date.now().toString(), label: '自定义', value: 10, startBlock: 0, trendRows: 6, beadRows: 6, dragonThreshold: 3 })}
-            className="px-5 py-2.5 rounded-xl text-xs font-black bg-gray-50 text-gray-400 border-2 border-dashed border-gray-200 hover:bg-white hover:border-blue-200 hover:text-blue-500 transition-all"
+      {/* Horizontal Rule Navigator with Quick Switcher */}
+      <div className="relative group max-w-6xl mx-auto mb-10 px-12">
+        <button 
+          onClick={() => setShowQuickSwitcher(true)}
+          className="absolute left-0 top-1/2 -translate-y-1/2 z-10 p-2.5 bg-white border border-gray-100 rounded-xl shadow-lg text-blue-600 hover:bg-blue-50 transition-all active:scale-90"
+          title="全量搜索切换器"
+        >
+          <Grid3X3 className="w-5 h-5" />
+        </button>
+
+        <div className="relative flex items-center overflow-hidden">
+          <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-gray-50 to-transparent pointer-events-none z-[5]"></div>
+          <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-gray-50 to-transparent pointer-events-none z-[5]"></div>
+          
+          <div 
+            ref={navRef}
+            className="flex items-center space-x-2 w-full overflow-x-auto no-scrollbar py-2 scroll-smooth"
           >
-            + 规则
-          </button>
-        </nav>
+            {rules.map((rule) => (
+              <button
+                key={rule.id}
+                onClick={() => setActiveRuleId(rule.id)}
+                className={`px-4 py-2.5 rounded-xl text-[11px] font-black transition-all duration-300 border-2 shrink-0 ${
+                  activeRuleId === rule.id
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-md scale-105'
+                    : 'bg-white text-gray-400 border-transparent hover:border-blue-100 hover:text-blue-500'
+                }`}
+              >
+                {rule.label}
+              </button>
+            ))}
+            <button 
+              onClick={() => setEditingRule({ id: Date.now().toString(), label: '新规则', value: 10, startBlock: 0, trendRows: 6, beadRows: 6, dragonThreshold: 3 })}
+              className="px-4 py-2.5 rounded-xl text-[11px] font-black bg-gray-100 text-gray-400 border-2 border-dashed border-gray-200 hover:bg-white hover:text-blue-500 transition-all shrink-0"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        <button 
+          onClick={() => navRef.current?.scrollBy({ left: -250, behavior: 'smooth' })}
+          className="absolute -left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-white border rounded-full hidden md:block"
+        >
+          <ChevronLeft className="w-4 h-4 text-gray-400" />
+        </button>
+        <button 
+          onClick={() => navRef.current?.scrollBy({ left: 250, behavior: 'smooth' })}
+          className="absolute -right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-white border rounded-full hidden md:block"
+        >
+          <ChevronRight className="w-4 h-4 text-gray-400" />
+        </button>
       </div>
 
       {/* Main View Area */}
@@ -392,22 +489,22 @@ const App: React.FC = () => {
             <div className="min-h-[280px] h-auto">
               <TrendChart 
                 key={`parity-trend-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="parity" title="单双走势 (大路)" rows={activeRule.trendRows} />
+                blocks={ruleFilteredBlocks} mode="parity" title="单双走势 (大路)" rows={activeRule?.trendRows || 6} />
             </div>
             <div className="min-h-[280px] h-auto">
               <TrendChart 
                 key={`size-trend-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="size" title="大小走势 (大路)" rows={activeRule.trendRows} />
+                blocks={ruleFilteredBlocks} mode="size" title="大小走势 (大路)" rows={activeRule?.trendRows || 6} />
             </div>
             <div className="min-h-[280px] h-auto">
               <BeadRoad 
                 key={`parity-bead-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘路" rows={activeRule.beadRows} />
+                blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘路" rows={activeRule?.beadRows || 6} />
             </div>
             <div className="min-h-[280px] h-auto">
               <BeadRoad 
                 key={`size-bead-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="size" title="大小珠盘路" rows={activeRule.beadRows} />
+                blocks={ruleFilteredBlocks} mode="size" title="大小珠盘路" rows={activeRule?.beadRows || 6} />
             </div>
           </div>
         ) : activeTab === 'dragon-list' ? (
@@ -425,10 +522,10 @@ const App: React.FC = () => {
               </h2>
             </div>
             <div className="min-h-[450px] h-auto">
-              {activeTab === 'parity-trend' && <TrendChart key={`parity-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双走势 (全量统计)" rows={activeRule.trendRows} />}
-              {activeTab === 'size-trend' && <TrendChart key={`size-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小走势 (全量统计)" rows={activeRule.trendRows} />}
-              {activeTab === 'parity-bead' && <BeadRoad key={`parity-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘 (原始序列)" rows={activeRule.beadRows} />}
-              {activeTab === 'size-bead' && <BeadRoad key={`size-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小珠盘 (原始序列)" rows={activeRule.beadRows} />}
+              {activeTab === 'parity-trend' && <TrendChart key={`parity-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双走势 (全量统计)" rows={activeRule?.trendRows || 6} />}
+              {activeTab === 'size-trend' && <TrendChart key={`size-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小走势 (全量统计)" rows={activeRule?.trendRows || 6} />}
+              {activeTab === 'parity-bead' && <BeadRoad key={`parity-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘 (原始序列)" rows={activeRule?.beadRows || 6} />}
+              {activeTab === 'size-bead' && <BeadRoad key={`size-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小珠盘 (原始序列)" rows={activeRule?.beadRows || 6} />}
             </div>
           </div>
         )}
@@ -447,7 +544,7 @@ const App: React.FC = () => {
               <Search className="absolute right-6 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300 group-focus-within:text-blue-400 transition-colors" />
             </div>
             <button 
-              onClick={() => {setSearchQuery(''); fillDataForInterval(activeRule);}} 
+              onClick={() => {setSearchQuery(''); if(activeRule) fillDataForInterval(activeRule);}} 
               className="w-full md:w-auto flex items-center justify-center px-10 py-4 bg-gray-100 text-gray-500 rounded-2xl border border-gray-200 hover:bg-gray-200 transition-all active:scale-95"
             >
               <RotateCcw className="w-5 h-5 mr-2" />
@@ -458,10 +555,74 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* Quick Switcher Modal */}
+      {showQuickSwitcher && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xl animate-in fade-in duration-200">
+           <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl p-8 max-h-[85vh] flex flex-col relative animate-in zoom-in-95 duration-200">
+              <button 
+                onClick={() => setShowQuickSwitcher(false)} 
+                className="absolute top-8 right-8 p-2 hover:bg-gray-100 rounded-full text-gray-400 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+
+              <div className="mb-8">
+                 <h2 className="text-2xl font-black text-gray-900 flex items-center">
+                    <Grid3X3 className="w-6 h-6 mr-3 text-blue-600" />
+                    全量采样规则搜索
+                    <span className="ml-4 px-3 py-1 bg-blue-50 text-blue-600 text-xs rounded-full">{rules.length} 条</span>
+                 </h2>
+                 <p className="text-gray-400 text-sm mt-1 font-medium">快速在大量规则中跳转</p>
+              </div>
+
+              <div className="relative mb-6">
+                 <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
+                 <input 
+                  autoFocus
+                  type="text" 
+                  placeholder="搜索规则名称、步长 (如: 120)..."
+                  value={switcherSearchQuery}
+                  onChange={(e) => setSwitcherSearchQuery(e.target.value)}
+                  className="w-full pl-16 pr-8 py-5 bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl outline-none font-black text-lg transition-all"
+                 />
+              </div>
+
+              <div className="flex-1 overflow-y-auto no-scrollbar grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 pb-4">
+                 {switcherFilteredRules.map(r => (
+                   <button 
+                    key={r.id}
+                    onClick={() => {
+                      setActiveRuleId(r.id);
+                      setShowQuickSwitcher(false);
+                      setSwitcherSearchQuery('');
+                    }}
+                    className={`p-4 rounded-2xl text-left border-2 transition-all group ${
+                      activeRuleId === r.id 
+                      ? 'bg-blue-600 border-blue-600 text-white shadow-lg scale-105' 
+                      : 'bg-white border-gray-100 hover:border-blue-200 text-gray-700'
+                    }`}
+                   >
+                     <p className={`text-[10px] font-black uppercase mb-1 ${activeRuleId === r.id ? 'text-blue-100' : 'text-gray-400'}`}>
+                        步长: {r.value}
+                     </p>
+                     <p className="text-xs font-black truncate">{r.label}</p>
+                   </button>
+                 ))}
+                 {switcherFilteredRules.length === 0 && (
+                   <div className="col-span-full py-20 text-center">
+                      <Filter className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                      <p className="text-gray-400 font-black uppercase tracking-widest text-sm">未找到匹配规则</p>
+                   </div>
+                 )}
+              </div>
+           </div>
+        </div>
+      )}
+
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md overflow-y-auto">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-3xl my-auto p-8 md:p-10 relative animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl my-auto p-8 md:p-10 relative animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto no-scrollbar">
             <button onClick={() => setShowSettings(false)} className="absolute top-8 right-8 p-2 hover:bg-gray-100 rounded-full text-gray-400">
               <X className="w-6 h-6" />
             </button>
@@ -469,7 +630,7 @@ const App: React.FC = () => {
               <h2 className="text-2xl font-black text-gray-900">核心配置</h2>
               <p className="text-gray-500 text-sm mt-2">管理 API、采样与主题配色</p>
             </div>
-            <div className="space-y-8">
+            <div className="space-y-10">
               <section className="bg-gray-50 p-6 rounded-3xl border border-gray-100">
                 <label className="block text-[10px] font-black text-gray-400 uppercase mb-3 tracking-[0.2em] ml-2">TRONGRID API KEY</label>
                 <div className="flex gap-4">
@@ -518,41 +679,81 @@ const App: React.FC = () => {
                 </div>
               </section>
 
-              <section>
-                <div className="flex justify-between items-center mb-4 px-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">采样规则管理</label>
-                  <div className="flex space-x-2">
+              <section className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">采样规则管理 ({rules.length})</label>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative">
+                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300" />
+                       <input 
+                        type="text" 
+                        placeholder="检索规则..."
+                        value={ruleSearchQuery}
+                        onChange={(e) => setRuleSearchQuery(e.target.value)}
+                        className="pl-9 pr-4 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-100 w-32 md:w-48 transition-all"
+                       />
+                    </div>
+                    <div className="flex border border-gray-100 rounded-lg overflow-hidden bg-gray-50">
+                       <button 
+                        onClick={() => setRuleSortBy('value')}
+                        className={`p-1.5 transition-colors ${ruleSortBy === 'value' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-blue-500'}`}
+                        title="按步长排序"
+                       >
+                         <SortAsc className="w-3.5 h-3.5" />
+                       </button>
+                       <button 
+                        onClick={() => setRuleSortBy('label')}
+                        className={`p-1.5 transition-colors ${ruleSortBy === 'label' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-blue-500'}`}
+                        title="按名称排序"
+                       >
+                         <SortDesc className="w-3.5 h-3.5" />
+                       </button>
+                    </div>
                     <button 
                       onClick={() => {
                         const csv = rules.map(r => `${r.label},${r.value},${r.startBlock},${r.trendRows},${r.beadRows},${r.dragonThreshold}`).join('\n');
                         setBatchText(csv);
                         setShowBatchModal(true);
                       }}
-                      className="text-indigo-600 flex items-center text-xs font-black hover:underline"
+                      className="text-indigo-600 flex items-center text-xs font-black hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors"
                     >
                       <Layers className="w-3 h-3 mr-1" /> 批量编辑
                     </button>
                     <button 
                       onClick={() => setEditingRule({ id: Date.now().toString(), label: '新规则', value: 10, startBlock: 0, trendRows: 6, beadRows: 6, dragonThreshold: 3 })}
-                      className="text-blue-600 flex items-center text-xs font-black hover:underline"
+                      className="text-blue-600 flex items-center text-xs font-black hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
                     >
                       <Plus className="w-3 h-3 mr-1" /> 新增
                     </button>
                   </div>
                 </div>
 
-                {/* 批量长龙提醒设置快捷栏 */}
-                <div className="bg-amber-50 rounded-2xl p-4 mb-4 border border-amber-100 flex items-center justify-between">
+                {selectedRuleIds.size > 0 && (
+                  <div className="bg-red-50 p-3 rounded-2xl border border-red-100 flex items-center justify-between animate-in slide-in-from-top-2">
+                    <div className="flex items-center space-x-3">
+                      <CheckSquare className="w-4 h-4 text-red-500" />
+                      <span className="text-xs font-black text-red-700">已选中 {selectedRuleIds.size} 条规则</span>
+                    </div>
+                    <button 
+                      onClick={deleteSelectedRules}
+                      className="bg-red-500 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-red-600 transition-colors shadow-sm"
+                    >
+                      批量删除
+                    </button>
+                  </div>
+                )}
+
+                <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 flex flex-col sm:flex-row items-center justify-between gap-4">
                    <div className="flex items-center space-x-2">
                      <Flame className="w-4 h-4 text-amber-500" />
                      <span className="text-[10px] font-black text-amber-700 uppercase">全规则龙提醒批量设置</span>
                    </div>
-                   <div className="flex space-x-1">
-                     {[2, 3, 5, 8, 10].map(v => (
+                   <div className="flex space-x-1.5">
+                     {[2, 3, 5, 8, 10, 15].map(v => (
                        <button 
                         key={v}
                         onClick={() => batchUpdateDragonThreshold(v)}
-                        className="w-7 h-7 bg-white rounded-lg border border-amber-200 text-[10px] font-black text-amber-600 hover:bg-amber-100 transition-colors"
+                        className="w-8 h-8 bg-white rounded-lg border border-amber-200 text-[10px] font-black text-amber-600 hover:bg-amber-100 transition-colors shadow-sm"
                        >
                          {v}
                        </button>
@@ -560,21 +761,64 @@ const App: React.FC = () => {
                    </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[400px] overflow-y-auto no-scrollbar pb-4">
-                  {rules.map(r => (
-                    <div key={r.id} className="bg-white border border-gray-100 rounded-2xl p-4 flex justify-between items-center group hover:shadow-md transition-all">
-                      <div>
-                        <p className="font-black text-sm text-gray-800">{r.label}</p>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">
-                           间隔: {r.value} | 走势: {r.trendRows}R | 珠盘: {r.beadRows}R | 提醒: {r.dragonThreshold}
-                        </p>
-                      </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => setEditingRule(r)} className="p-2 text-gray-400 hover:text-blue-600 transition-colors"><Edit3 className="w-4 h-4" /></button>
-                        <button onClick={() => deleteRule(r.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                    </div>
-                  ))}
+                <div className="bg-white border border-gray-100 rounded-3xl overflow-hidden shadow-inner">
+                  <div className="bg-gray-50/50 p-4 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10 backdrop-blur-sm">
+                    <button 
+                      onClick={() => selectAllRules(filteredAndSortedRules)}
+                      className="flex items-center space-x-2 text-[10px] font-black text-gray-500 hover:text-blue-600 transition-colors"
+                    >
+                      {selectedRuleIds.size === filteredAndSortedRules.length && filteredAndSortedRules.length > 0 ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
+                      <span>全选本页</span>
+                    </button>
+                    <span className="text-[10px] font-black text-gray-300 uppercase">列表管理视图</span>
+                  </div>
+                  
+                  <div className="max-h-[500px] overflow-y-auto no-scrollbar pb-4 divide-y divide-gray-50">
+                    {filteredAndSortedRules.length === 0 ? (
+                      <div className="py-12 text-center text-gray-400 text-xs font-bold italic">未检索到相关规则</div>
+                    ) : (
+                      filteredAndSortedRules.map(r => (
+                        <div key={r.id} className="group hover:bg-blue-50/30 transition-all flex items-center p-4">
+                          <button 
+                            onClick={() => toggleRuleSelection(r.id)}
+                            className="mr-4 text-gray-300 hover:text-blue-500 transition-colors"
+                          >
+                            {selectedRuleIds.has(r.id) ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4" />}
+                          </button>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center space-x-2">
+                              <p className="font-black text-sm text-gray-800 truncate">{r.label}</p>
+                              {r.id === activeRuleId && <span className="bg-blue-100 text-blue-600 text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-tighter">当前激活</span>}
+                            </div>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                               <span className="text-[9px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black">步长: {r.value}</span>
+                               <span className="text-[9px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black">走势: {r.trendRows}R</span>
+                               <span className="text-[9px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black">珠盘: {r.beadRows}R</span>
+                               <span className="text-[9px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded font-black">龙提醒: {r.dragonThreshold}连</span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => setEditingRule(r)} 
+                              className="p-2.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all shadow-sm"
+                              title="编辑"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => deleteRule(r.id)} 
+                              className="p-2.5 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl transition-all shadow-sm"
+                              title="删除"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </section>
             </div>
@@ -582,9 +826,8 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Rule Editor Modal */}
       {editingRule && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md p-8 animate-in slide-in-from-bottom-4 duration-300">
             <h3 className="text-xl font-black mb-6 text-gray-800">编辑采样规则</h3>
             <form onSubmit={handleSaveRule} className="space-y-5">
@@ -610,38 +853,9 @@ const App: React.FC = () => {
                 <div>
                   <label className="block text-[10px] font-black text-gray-400 uppercase mb-1 ml-1">起始偏移</label>
                   <input 
-                    type="number" min="0" placeholder="0"
+                    type="number" min="0"
                     value={editingRule.startBlock || ''}
                     onChange={e => setEditingRule({...editingRule, startBlock: parseInt(e.target.value) || 0})}
-                    className="w-full px-5 py-3 rounded-xl bg-gray-50 border-0 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-sm"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1 ml-1">走势行数</label>
-                  <input 
-                    type="number" min="3" max="12" required
-                    value={editingRule.trendRows}
-                    onChange={e => setEditingRule({...editingRule, trendRows: Math.min(12, Math.max(3, parseInt(e.target.value) || 6))})}
-                    className="w-full px-5 py-3 rounded-xl bg-gray-50 border-0 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1 ml-1">珠盘行数</label>
-                  <input 
-                    type="number" min="3" max="60" required
-                    value={editingRule.beadRows}
-                    onChange={e => setEditingRule({...editingRule, beadRows: Math.min(60, Math.max(3, parseInt(e.target.value) || 6))})}
-                    className="w-full px-5 py-3 rounded-xl bg-gray-50 border-0 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1 ml-1">龙提醒 (连)</label>
-                  <input 
-                    type="number" min="2" max="50" required
-                    value={editingRule.dragonThreshold || 3}
-                    onChange={e => setEditingRule({...editingRule, dragonThreshold: Math.max(2, parseInt(e.target.value) || 3)})}
                     className="w-full px-5 py-3 rounded-xl bg-gray-50 border-0 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-sm"
                   />
                 </div>
@@ -655,7 +869,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Batch Editor Modal */}
       {showBatchModal && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
           <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-8 md:p-10 animate-in zoom-in-95 duration-200">
@@ -666,45 +879,21 @@ const App: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-xl font-black text-gray-900">批量配置采样规则</h3>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">通过文本框快速导入或修改所有分析步长</p>
                   </div>
                 </div>
                 <button onClick={() => setShowBatchModal(false)} className="p-2 hover:bg-gray-100 rounded-full text-gray-400">
                   <X className="w-5 h-5" />
                 </button>
              </div>
-
-             <div className="mb-6">
-                <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-start space-x-3 mb-4">
-                  <FileText className="w-5 h-5 text-gray-400 shrink-0 mt-1" />
-                  <div className="text-[11px] text-gray-500 leading-relaxed font-medium">
-                    <p className="font-black text-gray-800 uppercase mb-1">格式指南：</p>
-                    <p>每行一个规则，字段使用逗号分隔：<code className="bg-gray-200 px-1 rounded text-gray-800">名称,步长,偏移,走势行,珠盘行,龙提醒</code></p>
-                    <p className="mt-1">示例：<code className="bg-gray-200 px-1 rounded text-gray-800">10区块,10,0,6,6,3</code></p>
-                  </div>
-                </div>
-                <textarea 
-                  value={batchText}
-                  onChange={(e) => setBatchText(e.target.value)}
-                  className="w-full h-[300px] px-6 py-5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-mono text-sm no-scrollbar resize-none"
-                  placeholder="名称,步长,偏移,走势行,珠盘行,龙提醒"
-                />
-             </div>
-
+             <textarea 
+               value={batchText}
+               onChange={(e) => setBatchText(e.target.value)}
+               className="w-full h-[300px] px-6 py-5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-mono text-sm no-scrollbar resize-none mb-6"
+               placeholder="名称,步长,偏移,走势行,珠盘行,龙提醒"
+             />
              <div className="flex gap-4">
-                <button 
-                  onClick={() => setShowBatchModal(false)}
-                  className="flex-1 py-4 font-black text-sm text-gray-400 hover:bg-gray-50 rounded-2xl transition-all"
-                >
-                  取消
-                </button>
-                <button 
-                  onClick={handleBatchRuleSave}
-                  className="flex-1 bg-indigo-600 text-white py-4 rounded-2xl font-black text-sm shadow-xl shadow-indigo-100 flex items-center justify-center active:scale-95 transition-all"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  保存并更新所有规则
-                </button>
+                <button onClick={() => setShowBatchModal(false)} className="flex-1 py-4 font-black text-sm text-gray-400 hover:bg-gray-50 rounded-2xl">取消</button>
+                <button onClick={handleBatchRuleSave} className="flex-1 bg-indigo-600 text-white py-4 rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-all">保存更新</button>
              </div>
           </div>
         </div>
@@ -717,11 +906,10 @@ const App: React.FC = () => {
             <h4 className="font-black text-sm mb-1 uppercase tracking-wider">连接异常</h4>
             <p className="text-xs font-medium opacity-80">{error}</p>
           </div>
-          <button onClick={() => fillDataForInterval(activeRule)} className="ml-4 px-5 py-2.5 bg-red-100 rounded-xl text-xs font-black uppercase hover:bg-red-200 transition-colors">重新同步</button>
+          <button onClick={() => activeRule && fillDataForInterval(activeRule)} className="ml-4 px-5 py-2.5 bg-red-100 rounded-xl text-xs font-black uppercase hover:bg-red-200 transition-colors">重新同步</button>
         </div>
       )}
 
-      {/* Lightweight Initial Loading Indicator (Only for heavy load) */}
       {isLoading && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-white/60 backdrop-blur-sm pointer-events-none">
           <div className="bg-white p-8 rounded-[2rem] shadow-2xl flex flex-col items-center border border-gray-100 animate-in zoom-in-90 duration-200">
@@ -731,7 +919,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Status Bar (Minimalist) */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 opacity-90 hover:opacity-100">
         <div className="bg-white/95 backdrop-blur-xl shadow-2xl rounded-full px-8 py-4 border border-gray-100 flex items-center space-x-6">
           <div className="flex items-center space-x-2.5">
