@@ -17,28 +17,44 @@ const BeadRoad: React.FC<BeadRoadProps> = memo(({ blocks, mode, title, rows = 6 
   }, [blocks, mode, rows]);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const isInitialMount = useRef(true);
-  const lastScrollWidth = useRef(0);
+  const isFirstDataLoad = useRef(true);
+  const lastBlocksCount = useRef(blocks.length);
 
+  // Intelligent Scroll Logic
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || blocks.length === 0) return;
 
-    const wasAtEnd = lastScrollWidth.current === 0 || 
-                     container.scrollLeft + container.clientWidth >= lastScrollWidth.current - 80;
+    const scrollToEnd = () => {
+      if (container) {
+        container.scrollLeft = container.scrollWidth;
+      }
+    };
 
-    if (isInitialMount.current || wasAtEnd) {
-      container.scrollTo({
-        left: container.scrollWidth,
-        behavior: isInitialMount.current ? 'auto' : 'smooth'
+    const BUFFER = 60;
+    const isAtEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - BUFFER;
+
+    // Handle initial load specifically when blocks are first populated
+    if (isFirstDataLoad.current) {
+      scrollToEnd();
+      const raf = requestAnimationFrame(() => {
+        scrollToEnd();
+        setTimeout(scrollToEnd, 150);
       });
-      isInitialMount.current = false;
-    }
-    
-    lastScrollWidth.current = container.scrollWidth;
-  }, [grid]);
+      isFirstDataLoad.current = false;
+      lastBlocksCount.current = blocks.length;
+      return () => cancelAnimationFrame(raf);
+    } 
 
-  // 计算当前长龙 (Latest Streak)
+    if (blocks.length > lastBlocksCount.current) {
+      if (isAtEnd) {
+        scrollToEnd();
+      }
+      lastBlocksCount.current = blocks.length;
+    }
+  }, [grid, blocks.length]);
+
+  // Calculate current streak
   const streakInfo = useMemo(() => {
     if (blocks.length === 0) return null;
     const sorted = [...blocks].sort((a, b) => b.height - a.height);
@@ -110,8 +126,8 @@ const BeadRoad: React.FC<BeadRoadProps> = memo(({ blocks, mode, title, rows = 6 
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100 flex flex-col h-full overflow-hidden">
-      <div className="flex justify-between items-center mb-3 px-1">
+    <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100 flex flex-col h-fit overflow-hidden">
+      <div className="flex justify-between items-center mb-3 px-1 shrink-0">
         <div className="flex flex-col">
           <h3 className="text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">
             {title || (mode === 'parity' ? '单双珠盘路' : '大小珠盘路')}
@@ -137,14 +153,25 @@ const BeadRoad: React.FC<BeadRoadProps> = memo(({ blocks, mode, title, rows = 6 
         </div>
       </div>
 
-      <div 
-        ref={containerRef}
-        className="overflow-auto custom-scrollbar rounded-lg border border-gray-100 bg-gray-50/20 flex-1 min-h-0"
-      >
-        <div className="flex min-h-full w-max">
-          {grid.map((column, colIdx) => (
-            <div key={colIdx} className="flex flex-col">
-              {column.map((cell, rowIdx) => renderCell(cell.type, cell.value, colIdx, rowIdx))}
+      <div className="flex h-auto min-h-0">
+        <div 
+          ref={containerRef}
+          className="overflow-auto custom-scrollbar border border-gray-100 bg-gray-50/20 flex-1"
+        >
+          <div className="flex h-max w-max">
+            {grid.map((column, colIdx) => (
+              <div key={colIdx} className="flex flex-col">
+                {column.map((cell, rowIdx) => renderCell(cell.type, cell.value, colIdx, rowIdx))}
+              </div>
+            ))}
+          </div>
+        </div>
+        
+        {/* Row numbers on the right */}
+        <div className="flex flex-col border-l border-gray-100 bg-gray-50/50 shrink-0">
+          {Array.from({ length: rows }).map((_, i) => (
+            <div key={i} className="w-8 h-8 flex items-center justify-center text-[10px] font-black text-gray-300 border-b border-gray-100/30">
+              {i + 1}
             </div>
           ))}
         </div>

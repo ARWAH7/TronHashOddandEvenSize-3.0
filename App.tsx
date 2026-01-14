@@ -1,14 +1,15 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, RotateCcw, Settings, X, Loader2, ShieldCheck, AlertCircle, RefreshCw, BarChart3, PieChart, Plus, Trash2, Edit3, Grid3X3, LayoutDashboard, Palette, Flame, Layers, Save, FileText, SortAsc, SortDesc, CheckSquare, Square, Filter, ChevronRight, ChevronLeft } from 'lucide-react';
-import { BlockData, IntervalRule } from './types';
+import { Search, RotateCcw, Settings, X, Loader2, ShieldCheck, AlertCircle, RefreshCw, BarChart3, PieChart, Plus, Trash2, Edit3, Grid3X3, LayoutDashboard, Palette, Flame, Layers, Save, FileText, SortAsc, SortDesc, CheckSquare, Square, Filter, ChevronRight, ChevronLeft, BrainCircuit, Activity } from 'lucide-react';
+import { BlockData, IntervalRule, FollowedPattern } from './types';
 import { fetchLatestBlock, fetchBlockByNum, transformTronBlock } from './utils/helpers';
 import TrendChart from './components/TrendChart';
 import BeadRoad from './components/BeadRoad';
 import DataTable from './components/DataTable';
 import DragonList from './components/DragonList';
+import AIPrediction from './components/AIPrediction';
 
-type TabType = 'dashboard' | 'parity-trend' | 'size-trend' | 'parity-bead' | 'size-bead' | 'dragon-list';
+type TabType = 'dashboard' | 'parity-trend' | 'size-trend' | 'parity-bead' | 'size-bead' | 'dragon-list' | 'ai-prediction';
 
 interface ThemeColors {
   odd: string;
@@ -63,8 +64,15 @@ const App: React.FC = () => {
     return DEFAULT_RULES;
   });
   const [activeRuleId, setActiveRuleId] = useState<string>(rules[0]?.id || '');
+
+  const [followedPatterns, setFollowedPatterns] = useState<FollowedPattern[]>(() => {
+    const saved = localStorage.getItem('followed_patterns');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return []; }
+    }
+    return [];
+  });
   
-  // Rule Management States
   const [ruleSearchQuery, setRuleSearchQuery] = useState('');
   const [switcherSearchQuery, setSwitcherSearchQuery] = useState('');
   const [ruleSortBy, setRuleSortBy] = useState<'value' | 'label'>('value');
@@ -83,7 +91,6 @@ const App: React.FC = () => {
   const isPollingBusy = useRef(false);
   const navRef = useRef<HTMLDivElement>(null);
 
-  // Sync theme colors to CSS variables
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty('--color-odd', themeColors.odd);
@@ -97,6 +104,10 @@ const App: React.FC = () => {
     blocksRef.current = allBlocks;
     localStorage.setItem('interval_rules', JSON.stringify(rules));
   }, [allBlocks, rules]);
+
+  useEffect(() => {
+    localStorage.setItem('followed_patterns', JSON.stringify(followedPatterns));
+  }, [followedPatterns]);
 
   const activeRule = useMemo(() => 
     rules.find(r => r.id === activeRuleId) || rules[0]
@@ -196,7 +207,7 @@ const App: React.FC = () => {
     }
   }, [activeRuleId, apiKey, fillDataForInterval, ruleFilteredBlocks.length, activeRule]);
 
-  // Persistent Polling Logic
+  // High Frequency Polling Logic - 1000ms
   useEffect(() => {
     if (!apiKey || isLoading) return;
 
@@ -238,7 +249,7 @@ const App: React.FC = () => {
       }
     };
 
-    const pollingId = window.setInterval(poll, 3000);
+    const pollingId = window.setInterval(poll, 1000);
 
     const handleVisibilityChange = () => {
       if (!document.hidden) {
@@ -367,6 +378,36 @@ const App: React.FC = () => {
     ).sort((a,b) => a.value - b.value);
   }, [rules, switcherSearchQuery]);
 
+  const toggleFollow = useCallback((pattern: FollowedPattern) => {
+    setFollowedPatterns(prev => {
+      const exists = prev.find(p => 
+        p.ruleId === pattern.ruleId && 
+        p.type === pattern.type && 
+        p.mode === pattern.mode && 
+        p.rowId === pattern.rowId
+      );
+      if (exists) {
+        return prev.filter(p => 
+          !(p.ruleId === pattern.ruleId && 
+            p.type === pattern.type && 
+            p.mode === pattern.mode && 
+            p.rowId === pattern.rowId)
+        );
+      }
+      return [...prev, pattern];
+    });
+  }, []);
+
+  const handleJumpToChart = useCallback((ruleId: string, type: 'parity' | 'size', mode: 'trend' | 'bead') => {
+    setActiveRuleId(ruleId);
+    if (mode === 'bead') {
+      setActiveTab(type === 'parity' ? 'parity-bead' : 'size-bead');
+    } else {
+      setActiveTab(type === 'parity' ? 'parity-trend' : 'size-trend');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
   const TABS = [
     { id: 'dashboard', label: '综合盘面', icon: LayoutDashboard, color: 'text-blue-500' },
     { id: 'parity-trend', label: '单双走势', icon: BarChart3, color: 'text-red-500' },
@@ -374,6 +415,7 @@ const App: React.FC = () => {
     { id: 'parity-bead', label: '单双珠盘', icon: Grid3X3, color: 'text-teal-500' },
     { id: 'size-bead', label: '大小珠盘', icon: Grid3X3, color: 'text-orange-500' },
     { id: 'dragon-list', label: '长龙提醒', icon: Flame, color: 'text-amber-500' },
+    { id: 'ai-prediction', label: 'AI 数据预测', icon: BrainCircuit, color: 'text-purple-600' },
   ] as const;
 
   const handleColorChange = (key: keyof ThemeColors, value: string) => {
@@ -402,13 +444,13 @@ const App: React.FC = () => {
         
         <p className="bg-white px-5 py-2 rounded-full shadow-sm border border-gray-50 text-gray-400 text-[10px] font-black items-center flex uppercase tracking-widest">
           <ShieldCheck className="w-3.5 h-3.5 mr-2 text-green-500" />
-          波场主网实时监听中
+          波场主网实时监听中 (高速同步模式)
         </p>
       </header>
 
       {/* Main Tab Navigation */}
       <div className="flex justify-center mb-8 sticky top-4 z-[40]">
-        <div className="inline-flex bg-white/80 backdrop-blur-md p-1.5 rounded-2xl shadow-xl border border-white/50 w-full max-w-4xl overflow-x-auto no-scrollbar">
+        <div className="inline-flex bg-white/80 backdrop-blur-md p-1.5 rounded-2xl shadow-xl border border-white/50 w-full max-w-5xl overflow-x-auto no-scrollbar">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -485,31 +527,42 @@ const App: React.FC = () => {
       {/* Main View Area */}
       <div className="mb-12">
         {activeTab === 'dashboard' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12 animate-in fade-in zoom-in-95 duration-500">
-            <div className="min-h-[280px] h-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12 animate-in fade-in zoom-in-95 duration-500">
+            {/* dashboard modules */}
+            <div className="h-fit p-1 bg-slate-100 rounded-3xl shadow-inner border border-slate-200">
               <TrendChart 
                 key={`parity-trend-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="parity" title="单双走势 (大路)" rows={activeRule?.trendRows || 6} />
+                blocks={ruleFilteredBlocks} mode="parity" title="单双走势" rows={activeRule?.trendRows || 6} />
             </div>
-            <div className="min-h-[280px] h-auto">
+            <div className="h-fit p-1 bg-slate-100 rounded-3xl shadow-inner border border-slate-200">
               <TrendChart 
                 key={`size-trend-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="size" title="大小走势 (大路)" rows={activeRule?.trendRows || 6} />
+                blocks={ruleFilteredBlocks} mode="size" title="大小走势" rows={activeRule?.trendRows || 6} />
             </div>
-            <div className="min-h-[280px] h-auto">
+            <div className="h-fit p-1 bg-slate-100 rounded-3xl shadow-inner border border-slate-200">
               <BeadRoad 
                 key={`parity-bead-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘路" rows={activeRule?.beadRows || 6} />
+                blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘" rows={activeRule?.beadRows || 6} />
             </div>
-            <div className="min-h-[280px] h-auto">
+            <div className="h-fit p-1 bg-slate-100 rounded-3xl shadow-inner border border-slate-200">
               <BeadRoad 
                 key={`size-bead-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="size" title="大小珠盘路" rows={activeRule?.beadRows || 6} />
+                blocks={ruleFilteredBlocks} mode="size" title="大小珠盘" rows={activeRule?.beadRows || 6} />
             </div>
           </div>
         ) : activeTab === 'dragon-list' ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <DragonList allBlocks={allBlocks} rules={rules} />
+             <DragonList 
+                allBlocks={allBlocks} 
+                rules={rules} 
+                followedPatterns={followedPatterns} 
+                onToggleFollow={toggleFollow}
+                onJumpToChart={handleJumpToChart}
+             />
+          </div>
+        ) : activeTab === 'ai-prediction' ? (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <AIPrediction allBlocks={allBlocks} rules={rules} />
           </div>
         ) : (
           <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-gray-100 mb-12 animate-in fade-in slide-in-from-bottom-4 duration-500 h-auto">
@@ -521,11 +574,11 @@ const App: React.FC = () => {
                 {TABS.find(t => t.id === activeTab)?.label} 深度分析
               </h2>
             </div>
-            <div className="min-h-[450px] h-auto">
-              {activeTab === 'parity-trend' && <TrendChart key={`parity-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双走势 (全量统计)" rows={activeRule?.trendRows || 6} />}
-              {activeTab === 'size-trend' && <TrendChart key={`size-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小走势 (全量统计)" rows={activeRule?.trendRows || 6} />}
-              {activeTab === 'parity-bead' && <BeadRoad key={`parity-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘 (原始序列)" rows={activeRule?.beadRows || 6} />}
-              {activeTab === 'size-bead' && <BeadRoad key={`size-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小珠盘 (原始序列)" rows={activeRule?.beadRows || 6} />}
+            <div className="h-fit">
+              {activeTab === 'parity-trend' && <TrendChart key={`parity-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双走势" rows={activeRule?.trendRows || 6} />}
+              {activeTab === 'size-trend' && <TrendChart key={`size-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小走势" rows={activeRule?.trendRows || 6} />}
+              {activeTab === 'parity-bead' && <BeadRoad key={`parity-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘" rows={activeRule?.beadRows || 6} />}
+              {activeTab === 'size-bead' && <BeadRoad key={`size-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小珠盘" rows={activeRule?.beadRows || 6} />}
             </div>
           </div>
         )}
@@ -783,7 +836,7 @@ const App: React.FC = () => {
                             onClick={() => toggleRuleSelection(r.id)}
                             className="mr-4 text-gray-300 hover:text-blue-500 transition-colors"
                           >
-                            {selectedRuleIds.has(r.id) ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4" />}
+                            {selectedRuleIds.has(r.id) ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
                           </button>
                           
                           <div className="flex-1 min-w-0">
@@ -889,7 +942,7 @@ const App: React.FC = () => {
                value={batchText}
                onChange={(e) => setBatchText(e.target.value)}
                className="w-full h-[300px] px-6 py-5 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-mono text-sm no-scrollbar resize-none mb-6"
-               placeholder="名称,步长,偏移,走势行,珠盘行,龙提醒"
+               placeholder="名称,步长,偏移,走势行,珠盘行,龙阈值 (逗号分隔)"
              />
              <div className="flex gap-4">
                 <button onClick={() => setShowBatchModal(false)} className="flex-1 py-4 font-black text-sm text-gray-400 hover:bg-gray-50 rounded-2xl">取消</button>
@@ -919,23 +972,28 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 opacity-90 hover:opacity-100">
-        <div className="bg-white/95 backdrop-blur-xl shadow-2xl rounded-full px-8 py-4 border border-gray-100 flex items-center space-x-6">
+      {/* Persistent Sync Status Bar */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 opacity-90 hover:opacity-100 scale-110">
+        <div className="bg-slate-900/95 backdrop-blur-xl shadow-2xl rounded-full px-8 py-4 border border-white/10 flex items-center space-x-6 text-white">
           <div className="flex items-center space-x-2.5">
-            <div className="relative flex h-3 w-3">
+            <div className="relative flex h-3.5 w-3.5">
               <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${apiKey && !error ? 'animate-ping bg-green-400' : 'bg-red-400'}`}></span>
-              <span className={`relative inline-flex rounded-full h-3 w-3 ${apiKey && !error ? 'bg-green-500' : 'bg-red-500'}`}></span>
+              <span className={`relative inline-flex rounded-full h-3.5 w-3.5 ${apiKey && !error ? 'bg-green-500' : 'bg-red-500'}`}></span>
             </div>
-            <span className="text-[10px] font-black text-gray-800 uppercase tracking-widest">
-              {apiKey && !error ? '实时同步中' : '离线状态'}
+            <span className="text-[10px] font-black uppercase tracking-widest">
+              {apiKey && !error ? '实时同步开启' : '离线状态'}
             </span>
           </div>
           {isSyncing && (
-            <div className="flex items-center space-x-2 border-l border-gray-100 pl-6">
-              <RefreshCw className="w-3.5 h-3.5 text-blue-500 animate-spin" />
-              <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">正在捕获新区块</span>
+            <div className="flex items-center space-x-2 border-l border-white/10 pl-6">
+              <Activity className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+              <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">最新高度捕获中</span>
             </div>
           )}
+          <div className="flex items-center space-x-2 border-l border-white/10 pl-6">
+             <span className="text-[10px] font-black text-white/40 uppercase">区块高度</span>
+             <span className="text-xs font-black tabular-nums">{allBlocks[0]?.height || '---'}</span>
+          </div>
         </div>
       </div>
     </div>

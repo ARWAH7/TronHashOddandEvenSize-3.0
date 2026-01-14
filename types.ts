@@ -21,6 +21,36 @@ export interface IntervalRule {
   dragonThreshold?: number; // Minimum streak to show in dragon list
 }
 
+export interface FollowedPattern {
+  ruleId: string;
+  type: 'parity' | 'size';
+  mode: 'trend' | 'bead';
+  rowId?: number;
+}
+
+export interface AIPredictionResult {
+  shouldPredict: boolean; // NEW: AI decides if the signal is strong enough
+  nextParity: 'ODD' | 'EVEN' | 'NEUTRAL';
+  parityConfidence: number;
+  nextSize: 'BIG' | 'SMALL' | 'NEUTRAL';
+  sizeConfidence: number;
+  analysis: string;
+  detectedCycle: string;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  entropyScore: number; // NEW: Quantitative measure of noise
+  targetHeight?: number;
+}
+
+export interface PredictionHistoryItem extends AIPredictionResult {
+  id: string;
+  timestamp: number;
+  resolved: boolean;
+  actualParity?: BlockType;
+  actualSize?: SizeType;
+  isParityCorrect?: boolean;
+  isSizeCorrect?: boolean;
+}
+
 export type IntervalType = number;
 
 export interface GridCell {

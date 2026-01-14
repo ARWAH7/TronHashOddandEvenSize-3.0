@@ -17,28 +17,46 @@ const TrendChart: React.FC<TrendChartProps> = memo(({ blocks, mode, title, rows 
   }, [blocks, mode, rows]);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const isInitialMount = useRef(true);
-  const lastScrollWidth = useRef(0);
+  const isFirstDataLoad = useRef(true);
+  const lastBlocksCount = useRef(blocks.length);
 
+  // Intelligent Scroll Logic
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || blocks.length === 0) return;
 
-    const wasAtEnd = lastScrollWidth.current === 0 || 
-                     container.scrollLeft + container.clientWidth >= lastScrollWidth.current - 80;
+    const scrollToEnd = () => {
+      if (container) {
+        container.scrollLeft = container.scrollWidth;
+      }
+    };
 
-    if (isInitialMount.current || wasAtEnd) {
-      container.scrollTo({
-        left: container.scrollWidth,
-        behavior: isInitialMount.current ? 'auto' : 'smooth'
+    const BUFFER = 60;
+    const isAtEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - BUFFER;
+
+    // First time data arrives after component mount (or rule switch remount)
+    if (isFirstDataLoad.current) {
+      scrollToEnd();
+      // Ensure it scrolls correctly after the grid is rendered in the DOM
+      const raf = requestAnimationFrame(() => {
+        scrollToEnd();
+        setTimeout(scrollToEnd, 150);
       });
-      isInitialMount.current = false;
-    }
+      isFirstDataLoad.current = false;
+      lastBlocksCount.current = blocks.length;
+      return () => cancelAnimationFrame(raf);
+    } 
     
-    lastScrollWidth.current = container.scrollWidth;
-  }, [grid]);
+    // Real-time update logic: follow only if user is at the latest data
+    if (blocks.length > lastBlocksCount.current) {
+      if (isAtEnd) {
+        scrollToEnd();
+      }
+      lastBlocksCount.current = blocks.length;
+    }
+  }, [grid, blocks.length]);
 
-  // 计算当前长龙 (Latest Streak)
+  // Calculate current streak
   const streakInfo = useMemo(() => {
     if (blocks.length === 0) return null;
     const sorted = [...blocks].sort((a, b) => b.height - a.height);
@@ -107,8 +125,8 @@ const TrendChart: React.FC<TrendChartProps> = memo(({ blocks, mode, title, rows 
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100 flex flex-col h-full overflow-hidden">
-      <div className="flex justify-between items-center mb-3 px-1">
+    <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100 flex flex-col h-fit overflow-hidden">
+      <div className="flex justify-between items-center mb-3 px-1 shrink-0">
         <div className="flex flex-col">
           <h3 className="text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">
             {title || (mode === 'parity' ? '单双走势 (大路)' : '大小走势 (大路)')}
@@ -136,9 +154,9 @@ const TrendChart: React.FC<TrendChartProps> = memo(({ blocks, mode, title, rows 
 
       <div 
         ref={containerRef}
-        className="overflow-auto custom-scrollbar rounded-lg border border-gray-100 bg-gray-50/20 flex-1 min-h-0"
+        className="overflow-auto custom-scrollbar rounded-lg border border-gray-100 bg-gray-50/20 h-auto min-h-0"
       >
-        <div className="flex min-h-full w-max">
+        <div className="flex h-max w-max">
           {grid.map((column, colIdx) => (
             <div key={colIdx} className="flex flex-col">
               {column.map((cell, rowIdx) => renderCell(cell.type, colIdx, rowIdx))}
