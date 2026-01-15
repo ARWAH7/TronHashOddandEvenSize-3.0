@@ -542,12 +542,12 @@ const App: React.FC = () => {
             <div className="h-fit p-1 bg-slate-100 rounded-3xl shadow-inner border border-slate-200">
               <BeadRoad 
                 key={`parity-bead-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘" rows={activeRule?.beadRows || 6} />
+                blocks={ruleFilteredBlocks} mode="parity" rule={activeRule} title="单双珠盘" rows={activeRule?.beadRows || 6} />
             </div>
             <div className="h-fit p-1 bg-slate-100 rounded-3xl shadow-inner border border-slate-200">
               <BeadRoad 
                 key={`size-bead-dashboard-${activeRuleId}`}
-                blocks={ruleFilteredBlocks} mode="size" title="大小珠盘" rows={activeRule?.beadRows || 6} />
+                blocks={ruleFilteredBlocks} mode="size" rule={activeRule} title="大小珠盘" rows={activeRule?.beadRows || 6} />
             </div>
           </div>
         ) : activeTab === 'dragon-list' ? (
@@ -577,8 +577,8 @@ const App: React.FC = () => {
             <div className="h-fit">
               {activeTab === 'parity-trend' && <TrendChart key={`parity-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双走势" rows={activeRule?.trendRows || 6} />}
               {activeTab === 'size-trend' && <TrendChart key={`size-trend-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小走势" rows={activeRule?.trendRows || 6} />}
-              {activeTab === 'parity-bead' && <BeadRoad key={`parity-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" title="单双珠盘" rows={activeRule?.beadRows || 6} />}
-              {activeTab === 'size-bead' && <BeadRoad key={`size-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" title="大小珠盘" rows={activeRule?.beadRows || 6} />}
+              {activeTab === 'parity-bead' && <BeadRoad key={`parity-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="parity" rule={activeRule} title="单双珠盘" rows={activeRule?.beadRows || 6} />}
+              {activeTab === 'size-bead' && <BeadRoad key={`size-bead-full-${activeRuleId}`} blocks={ruleFilteredBlocks} mode="size" rule={activeRule} title="大小珠盘" rows={activeRule?.beadRows || 6} />}
             </div>
           </div>
         )}

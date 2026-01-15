@@ -1,20 +1,27 @@
 
 import React, { useMemo, useRef, useEffect, memo } from 'react';
-import { BlockData } from '../types';
+import { BlockData, IntervalRule } from '../types';
 import { calculateBeadGrid } from '../utils/helpers';
 import { Flame } from 'lucide-react';
 
 interface BeadRoadProps {
   blocks: BlockData[];
   mode: 'parity' | 'size';
+  rule?: IntervalRule; // Pass the active rule for better alignment logic
   title?: string;
   rows?: number;
 }
 
-const BeadRoad: React.FC<BeadRoadProps> = memo(({ blocks, mode, title, rows = 6 }) => {
+const BeadRoad: React.FC<BeadRoadProps> = memo(({ blocks, mode, rule, title, rows = 6 }) => {
   const grid = useMemo(() => {
-    return calculateBeadGrid(blocks, mode === 'parity' ? 'type' : 'sizeType', rows);
-  }, [blocks, mode, rows]);
+    return calculateBeadGrid(
+      blocks, 
+      mode === 'parity' ? 'type' : 'sizeType', 
+      rows,
+      rule?.value || 1,
+      rule?.startBlock || 0
+    );
+  }, [blocks, mode, rows, rule]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isFirstDataLoad = useRef(true);
