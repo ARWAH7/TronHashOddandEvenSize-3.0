@@ -53,11 +53,17 @@ const AI_MODELS_DOCS = [
 ];
 
 const getNextAlignedHeight = (currentHeight: number, step: number, startBlock: number) => {
-  if (step <= 1) return currentHeight + 2;
   const offset = startBlock || 0;
+  // 如果步长小于等于1，直接预测下一期
+  if (step <= 1) return currentHeight + 1;
+  
   const diff = currentHeight - offset;
+  // 计算当前高度之后最近的一个符合步长规则的高度
   const nextMultiplier = Math.floor(diff / step) + 1;
-  return offset + (nextMultiplier * step);
+  const nextHeight = offset + (nextMultiplier * step);
+  
+  // 兜底：如果算出来的高度不大于当前高度，则强制再加一个步长
+  return nextHeight > currentHeight ? nextHeight : nextHeight + step;
 };
 
 /**
@@ -94,16 +100,14 @@ const runDeepAnalysisV4 = (blocks: BlockData[], rule: IntervalRule, targetHeight
 
   const getBayesianConf = (bias: number) => {
     const deviation = Math.abs(bias - 0.5);
-    if (deviation > 0.18) return 94; // 稍微降低阈值以增加大小推荐频率
+    if (deviation > 0.18) return 94;
     if (deviation > 0.12) return 88;
     return 50;
   };
 
   const checkPeriodicity = (seq: string) => {
-    // 单双周期
     if (seq.startsWith('OEOEOE') || seq.startsWith('EOEOEO')) return { match: true, val: seq[0] === 'O' ? 'EVEN' : 'ODD', conf: 93 };
     if (seq.startsWith('OOEEOO') || seq.startsWith('EEOOEE')) return { match: true, val: seq[0] === 'O' ? 'EVEN' : 'ODD', conf: 91 };
-    // 大小周期
     if (seq.startsWith('BSBSBS') || seq.startsWith('SBSBSB')) return { match: true, val: seq[0] === 'B' ? 'SMALL' : 'BIG', conf: 93 };
     if (seq.startsWith('BBSSBB') || seq.startsWith('SSBBSS')) return { match: true, val: seq[0] === 'B' ? 'SMALL' : 'BIG', conf: 91 };
     return { match: false, val: 'NEUTRAL', conf: 0 };
@@ -180,18 +184,32 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
   const lastAnalyzedHeight = useRef(0);
 
   const [history, setHistory] = useState<(PredictionHistoryItem & { ruleId: string })[]>(() => {
-    const saved = localStorage.getItem('ai_prediction_history_v9');
+    const saved = localStorage.getItem('ai_prediction_history_v10');
     return saved ? JSON.parse(saved) : [];
   });
 
+  // 1. 修复点：删除规则时清理对应历史
   useEffect(() => {
-    localStorage.setItem('ai_prediction_history_v9', JSON.stringify(history));
+    const activeRuleIds = new Set(rules.map(r => r.id));
+    setHistory(prev => {
+      const filtered = prev.filter(item => activeRuleIds.has(item.ruleId));
+      if (filtered.length !== prev.length) {
+        return filtered;
+      }
+      return prev;
+    });
+  }, [rules]);
+
+  useEffect(() => {
+    localStorage.setItem('ai_prediction_history_v10', JSON.stringify(history));
   }, [history]);
 
+  // 2. 修复点：新增规则时从最新高度往后计算 targetHeight
   const rulesMatrix = useMemo(() => {
-    if (allBlocks.length < 100) return [];
+    if (allBlocks.length < 50) return [];
     const currentHeight = allBlocks[0].height;
     return rules.map(rule => {
+      // 确保预测高度严格大于当前最新高度
       const targetHeight = getNextAlignedHeight(currentHeight, rule.value, rule.startBlock);
       return { rule, result: runDeepAnalysisV4(allBlocks, rule, targetHeight) };
     });
@@ -240,12 +258,13 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
   useEffect(() => {
     if (allBlocks.length < 50 || isSyncing) return;
     const currentTop = allBlocks[0].height;
-    if (currentTop === lastAnalyzedHeight.current) return;
-    lastAnalyzedHeight.current = currentTop;
+    
+    // 我们在这里监听高度变化或规则变化
     setIsSyncing(true);
 
     const newPredictions = rulesMatrix
       .filter(m => m.result.shouldPredict)
+      // 检查历史记录中是否已经存在该规则在该高度的预测
       .filter(m => !history.some(h => h.ruleId === m.rule.id && h.targetHeight === m.result.targetHeight))
       .map(m => ({
         ...m.result,
@@ -260,7 +279,7 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
       setHistory(prev => [...newPredictions, ...prev].slice(0, 400));
     }
     setIsSyncing(false);
-  }, [allBlocks[0]?.height, rulesMatrix, isSyncing, history]);
+  }, [allBlocks[0]?.height, rulesMatrix, history.length]); // 依赖项调整
 
   useEffect(() => {
     if (allBlocks.length === 0 || history.length === 0) return;
@@ -305,7 +324,7 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="flex items-center space-x-4">
             <div className="p-3 bg-indigo-50 rounded-2xl">
-              <Layers className="w-7 h-7 text-indigo-600" />
+              <BrainCircuit className="w-7 h-7 text-indigo-600" />
             </div>
             <div>
               <h3 className="text-3xl font-black text-gray-900 tracking-tight">AI 数据稳定演算矩阵</h3>
@@ -355,7 +374,7 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
                     <div className="mt-2 space-y-2">
                        <div className="flex items-center space-x-1.5">
                           <Trophy className="w-3 h-3 text-amber-500" />
-                          <span className="text-[10px] font-bold text-indigo-600">总胜率: {stats?.pAcc || 0}% / {stats?.sAcc || 0}%</span>
+                          <span className="text-[10px] font-bold text-indigo-600">胜率: {stats?.pAcc || 0}% / {stats?.sAcc || 0}%</span>
                        </div>
                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[8px] font-black uppercase text-gray-400 bg-gray-50/50 p-2 rounded-xl">
                           <div className="flex justify-between items-center">
@@ -398,14 +417,14 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
                       </div>
                     </div>
                     <div className="flex items-center justify-between text-[11px] font-black">
-                       <span className="text-gray-400 uppercase tracking-widest">对齐高度:</span>
+                       <span className="text-gray-400 uppercase tracking-widest">目标高度:</span>
                        <span className="text-indigo-600 tabular-nums font-black">#{item.result.targetHeight}</span>
                     </div>
                   </div>
                 ) : (
                   <div className="py-12 text-center opacity-30 group-hover:opacity-50 transition-opacity">
                     <Microscope className="w-10 h-10 mx-auto mb-3 text-gray-400" />
-                    <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">捕捉高胜率信号中...<br/>当前规则处于低共振态</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">捕捉高置信度信号...<br/>当前采样共振偏低</p>
                   </div>
                 )}
                 {isSelected && <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-indigo-600"></div>}
@@ -427,7 +446,7 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
                   <div>
                     <h3 className="text-4xl font-black text-gray-900 tracking-tight">高置信信号锁定: {focusedRuleResult.rule.label}</h3>
                     <div className="flex items-center space-x-4 mt-2">
-                      <span className="px-4 py-1.5 bg-indigo-100 text-indigo-700 text-xs font-black rounded-xl border border-indigo-200">高度对齐: #{focusedRuleResult.result.targetHeight}</span>
+                      <span className="px-4 py-1.5 bg-indigo-100 text-indigo-700 text-xs font-black rounded-xl border border-indigo-200">目标区块: #{focusedRuleResult.result.targetHeight}</span>
                       <span className="px-4 py-1.5 bg-emerald-100 text-emerald-700 text-xs font-black rounded-xl border border-emerald-200">共振模型: {focusedRuleResult.result.detectedCycle}</span>
                     </div>
                   </div>
@@ -641,7 +660,7 @@ const AIPrediction: React.FC<AIPredictionProps> = memo(({ allBlocks, rules }) =>
                           <div className={`px-3 py-1.5 rounded-2xl flex items-center space-x-1.5 ${
                             item.isSizeCorrect ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'
                           }`}>
-                            {item.isSizeCorrect ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                            {item.isParityCorrect ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
                             <span className="text-[10px] font-black">大小</span>
                           </div>
                         )}
