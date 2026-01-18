@@ -38,21 +38,27 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
     if (allBlocks.length === 0) return { trendDragons: [], beadRowDragons: [], followedResults: [] };
 
     rules.forEach(rule => {
+      const epoch = rule.startBlock || 0;
+      const interval = rule.value;
+      const rows = rule.beadRows || 6;
+
       const checkAlignment = (height: number) => {
-        if (rule.value <= 1) return true;
-        if (rule.startBlock > 0) {
-          return height >= rule.startBlock && (height - rule.startBlock) % rule.value === 0;
+        if (interval <= 1) return true;
+        if (epoch > 0) {
+          return height >= epoch && (height - epoch) % interval === 0;
         }
-        return height % rule.value === 0;
+        return height % interval === 0;
       };
 
+      // 过滤符合采样规则的区块，按高度从大到小排序（最新在前）
       const filtered = allBlocks.filter(b => checkAlignment(b.height)).sort((a, b) => b.height - a.height);
       if (filtered.length === 0) return;
 
       const threshold = rule.dragonThreshold || 3;
       const latestHeight = filtered[0].height;
-      const nextHeight = latestHeight + rule.value;
+      const nextHeight = latestHeight + interval;
 
+      // 1. 走势图长龙 (Big Road)
       const calculateStreak = (key: 'type' | 'sizeType') => {
         let count = 0;
         const firstVal = filtered[0][key];
@@ -62,9 +68,6 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
         }
         return { value: firstVal, count };
       };
-
-      const pStreak = calculateStreak('type');
-      const sStreak = calculateStreak('sizeType');
 
       const addTrendDragon = (type: 'parity' | 'size', streak: any) => {
         const info: DragonInfo = {
@@ -89,26 +92,25 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
         if (isFollowed && matchesFilter) watchResults.push(info);
       };
 
-      addTrendDragon('parity', pStreak);
-      addTrendDragon('size', sStreak);
+      addTrendDragon('parity', calculateStreak('type'));
+      addTrendDragon('size', calculateStreak('sizeType'));
 
-      const rows = rule.beadRows || 6;
-      const chrono = [...filtered].sort((a, b) => a.height - b.height);
-      const total = chrono.length;
-
+      // 2. 珠盘路行级长龙 (Bead Row)
+      // 使用与 BeadRoad 组件一致的物理对齐逻辑进行行扫描
       for (let r = 0; r < rows; r++) {
-        const rowItems: BlockData[] = [];
-        for (let i = r; i < total; i += rows) {
-          rowItems.push(chrono[i]);
-        }
+        // 筛选出属于物理第 r 行的区块（r=0 为第一行）
+        const rowItems = filtered.filter(b => {
+          const logicalIdx = Math.floor((b.height - epoch) / interval);
+          return (logicalIdx % rows) === r;
+        });
         
         if (rowItems.length === 0) continue;
-        const rowLatest = rowItems.reverse();
         
+        // rowItems 已经是从最新到最旧排序
         const calcRowStreak = (key: 'type' | 'sizeType') => {
           let count = 0;
-          const firstVal = rowLatest[0][key];
-          for (const b of rowLatest) {
+          const firstVal = rowItems[0][key];
+          for (const b of rowItems) {
             if (b[key] === firstVal) count++;
             else break;
           }
@@ -117,7 +119,9 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
 
         const rpStreak = calcRowStreak('type');
         const rsStreak = calcRowStreak('sizeType');
-        const rowNextHeight = rowLatest[0].height + (rule.value * rows);
+        
+        // 该行下一个出球的预期高度
+        const rowNextHeight = rowItems[0].height + (interval * rows);
 
         const addBeadDragon = (type: 'parity' | 'size', streak: any) => {
           const info: DragonInfo = {
@@ -131,7 +135,7 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
             color: streak.value === 'ODD' || streak.value === 'BIG' ? (type === 'parity' ? 'var(--color-odd)' : 'var(--color-big)') : (type === 'parity' ? 'var(--color-even)' : 'var(--color-small)'),
             threshold,
             nextHeight: rowNextHeight,
-            rowId: r + 1
+            rowId: r + 1 // 物理行号 (1-indexed)
           };
           
           const matchesFilter = activeFilter === 'ALL' || info.rawType === activeFilter;
@@ -181,7 +185,7 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
 
     return (
       <div 
-        key={`${dragon.ruleName}-${dragon.type}-${dragon.rowId || 't'}-${index}-${isFollowedView ? 'v' : 'm'}`}
+        key={`${dragon.ruleName}-${dragon.type}-${dragon.mode}-${dragon.rowId || 't'}-${index}-${isFollowedView ? 'v' : 'm'}`}
         onClick={handleCardClick}
         className={`group relative bg-white rounded-2xl p-4 border transition-all duration-300 cursor-pointer ${
           dragon.count >= 5 ? 'border-amber-200 shadow-md ring-1 ring-amber-100' : 'border-gray-100 hover:shadow-lg'
@@ -388,9 +392,9 @@ const DragonList: React.FC<DragonListProps> = memo(({ allBlocks, rules, followed
              长龙关注与提醒逻辑说明：
            </p>
            <ul className="text-[11px] text-blue-600/80 font-medium space-y-1 list-disc pl-4">
+             <li><strong>物理对齐</strong>：珠盘路行提醒严格采用 (高度 - 偏移) / 步长 % 行数 的物理逻辑，确保与盘面显示的行号 100% 一致。</li>
              <li><strong>智能跳转</strong>：直接点击任何长龙卡片，系统将为您切换至对应规则的实战分析界面。</li>
              <li><strong>多维筛选</strong>：使用顶部的筛选器可以快速定位特定结果。</li>
-             <li><strong>我的关注</strong>：关注项同样受顶部筛选器控制。</li>
              <li><strong>动态高亮</strong>：当关注项连出数较多时卡片会有特殊视觉提示。</li>
            </ul>
          </div>
